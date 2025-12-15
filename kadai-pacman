@@ -1,0 +1,330 @@
+# パックマン風のゲームを作る
+# 次に、パワー餌を追加
+
+import pyxel
+import random
+
+TILE_SIZE = 8
+
+# タイルの意味
+# 0: 通路（ドットあり）
+# 1: 壁
+# 2: ドットを取った後の通路
+# 3: ゴースト専用ゾーン
+# 4: パワー餌がある通路
+# 5: パワー餌取得済み通路
+# 9: プレイヤー初期位置
+
+MAZE = [
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    [1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1],
+    [1, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0, 1],
+    [1, 0, 1, 4, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 4, 0, 1],
+    [1, 0, 1, 4, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 4, 0, 1],
+    [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1],
+    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    [1, 1, 1, 1, 1, 1, 0, 1, 3, 3, 3, 1, 0, 1, 1, 0, 1],
+    [1, 4, 0, 0, 0, 1, 0, 1, 3, 3, 3, 1, 0, 1, 0, 0, 1],
+    [1, 0, 1, 1, 0, 1, 0, 1, 3, 3, 3, 1, 0, 1, 0, 1, 1],
+    [1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1],
+    [1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1],
+    [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1],
+    [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1],
+    [1, 4, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 9, 1],
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+]
+
+MAP_WIDTH = len(MAZE[0])
+MAP_HEIGHT = len(MAZE)
+SCREEN_WIDTH = MAP_WIDTH * TILE_SIZE
+SCREEN_HEIGHT = MAP_HEIGHT * TILE_SIZE
+
+
+class Player:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.score = 0
+        self.alive = True
+        self.power_mode = False  # パワー餌を取ったかどうか
+
+    def update(self, app):
+        if not self.alive:
+            return
+
+        dx, dy = 0, 0
+        if pyxel.btnp(pyxel.KEY_LEFT): dx = -1
+        elif pyxel.btnp(pyxel.KEY_RIGHT): dx = 1
+        elif pyxel.btnp(pyxel.KEY_UP): dy = -1
+        elif pyxel.btnp(pyxel.KEY_DOWN): dy = 1
+
+        nx = self.x + dx
+        ny = self.y + dy
+
+        if 0 <= nx < MAP_WIDTH and 0 <= ny < MAP_HEIGHT:
+            tile = MAZE[ny][nx]
+            if tile != 1 and tile != 3:
+                self.x = nx
+                self.y = ny
+                if MAZE[ny][nx] == 0:
+                    MAZE[ny][nx] = 2
+                    self.score += 10
+                elif MAZE[ny][nx] == 4:
+                    MAZE[ny][nx] = 5
+                    self.score += 50
+                    app.trigger_power_mode()
+
+    def draw(self):
+        px = self.x * TILE_SIZE + TILE_SIZE // 2
+        py = self.y * TILE_SIZE + TILE_SIZE // 2
+        color = pyxel.COLOR_YELLOW if self.alive else pyxel.COLOR_RED
+        if self.power_mode and pyxel.frame_count % 2 == 0:
+            return  # パワー餌状態なら点滅させる
+        pyxel.circ(px, py, 3, color)
+
+
+class Ghost:
+    def __init__(self, x, y, color):
+        self.x = x
+        self.y = y
+        self.color = color
+        self.timer = 0
+        self.dir = (0, -1)  # 初期方向（上）
+        self.mode = "chase"       # or "frightened"、Ghostの状態
+        self.fright_timer = 0     # 残り逃走フレーム数
+
+    def update(self, app):
+        # ゴーストの状態が "frightened" の場合は、親クラスで処理をする
+        if self.mode == "frightened":
+            self.fright_timer -= 1
+            if self.fright_timer <= 0:
+                self.mode = "chase"
+                app.player.power_mode = False  # パワー餌状態を解除
+            self.move_randomly()    # パニックでランダムに移動
+            return True
+        return False
+
+    def draw(self):
+        px = self.x * TILE_SIZE
+        py = self.y * TILE_SIZE
+        body_color = pyxel.COLOR_BLUE if self.mode == "frightened" else self.color
+
+        # 本体（上が丸い）
+        pyxel.circ(px + 4, py + 4, 4, body_color)
+        pyxel.rect(px, py + 4, 8, 4, body_color)
+
+        # ギザギザの足（3つ）
+        pyxel.pset(px + 1, py + 8, body_color)
+        pyxel.pset(px + 3, py + 8, body_color)
+        pyxel.pset(px + 5, py + 8, body_color)
+
+        # 目（中央白 + 黒点）
+        pyxel.circ(px + 2, py + 4, 1, pyxel.COLOR_WHITE)
+        pyxel.circ(px + 6, py + 4, 1, pyxel.COLOR_WHITE)
+        pyxel.pset(px + 2, py + 4, pyxel.COLOR_BLACK)
+        pyxel.pset(px + 6, py + 4, pyxel.COLOR_BLACK)
+
+
+    def move_randomly(self):
+        # ランダムに移動方向を選ぶ（上下左右）
+        dirs = [(0, -1), (1, 0), (0, 1), (-1, 0)]
+        random.shuffle(dirs)
+        for dx, dy in dirs:
+            nx = self.x + dx
+            ny = self.y + dy
+            if 0 <= nx < MAP_WIDTH and 0 <= ny < MAP_HEIGHT:
+                tile = MAZE[ny][nx]
+                if tile != 1:  # ゴーストは巣にも入れる
+                    self.x = nx
+                    self.y = ny
+                break
+
+
+class FoolishGhost(Ghost):
+    def update(self, app):
+        self.timer += 1
+        if self.timer % 15 != 0:
+            return  # 15フレームごとに移動
+
+        # ゴーストがfrightened状態なら親クラスの処理を呼ぶ
+        if super().update(app):
+            return
+        # ゴーストが通常状態なら移動ロジックを実行
+        if MAZE[self.y][self.x] == 3:
+            # ゴーストが巣の中にいる場合は、ランダムに移動
+            self.move_randomly()
+        else:
+            # ゴーストが巣の外にいる場合は、プレイヤーの位置を考慮して移動
+            self.move_towards_player(app)
+
+    def move_towards_player(self, app):
+        player = app.player
+        # プレイヤーの座標を使って距離の近い方向を選ぶ
+        candidates = []
+        for dx, dy in [(0, -1), (1, 0), (0, 1), (-1, 0)]:
+            nx, ny = self.x + dx, self.y + dy
+            if 0 <= nx < MAP_WIDTH and 0 <= ny < MAP_HEIGHT:
+                if MAZE[ny][nx] != 1:
+                    dist = abs(nx - player.x) + abs(ny - player.y)
+                    candidates.append((dist, nx, ny))
+        # 最も距離の小さい方向へ移動
+        if candidates:
+            candidates.sort()
+            self.x, self.y = candidates[0][1], candidates[0][2]
+
+
+class ChassingGhost(Ghost):
+    def update(self, app):
+        self.timer += 1
+        if self.timer % 10 != 0:
+            return  # 10フレームに1度移動
+
+        # ゴーストがfrightened状態なら親クラスの処理を呼ぶ
+        if super().update(app):
+            return
+        # 現在の方向に進めるならそのまま進む
+        dx, dy = self.dir
+        nx = self.x + dx
+        ny = self.y + dy
+        if self.can_move_to(nx, ny):
+            self.x = nx
+            self.y = ny
+
+            # 交差点なら方向変更を検討
+            if self.is_intersection():
+                self.dir = self.choose_direction(app.player)
+        else:
+            # 進めないなら交差点とみなして方向変更
+            self.dir = self.choose_direction(app.player)
+
+    def can_move_to(self, x, y):
+        if 0 <= x < MAP_WIDTH and 0 <= y < MAP_HEIGHT:
+            return MAZE[y][x] != 1  # 壁以外OK（巣も通れる）
+        return False
+
+    def is_intersection(self):
+        # 交差点：上下左右に2方向以上進めるなら交差点とする
+        count = 0
+        for dx, dy in [(0, -1), (1, 0), (0, 1), (-1, 0)]:
+            if self.can_move_to(self.x + dx, self.y + dy):
+                count += 1
+        return count >= 3  # 三方向以上に進めるとき交差点と判定
+
+    def choose_direction(self, player):
+        # プレイヤーに近づく方向を優先
+        dirs = [(0, -1), (1, 0), (0, 1), (-1, 0)]  # 上右下左
+        best_dirs = []
+        min_dist = float('inf')
+
+        for dx, dy in dirs:
+            nx = self.x + dx
+            ny = self.y + dy
+
+            # 壁と逆戻りを除外（逆戻り防止）
+            if (dx, dy) == (-self.dir[0], -self.dir[1]):
+                continue
+            if not self.can_move_to(nx, ny):
+                continue
+
+            # マンハッタン距離で評価
+            dist = abs(player.x - nx) + abs(player.y - ny)
+            if dist < min_dist:
+                min_dist = dist
+                best_dirs = [(dx, dy)]
+            elif dist == min_dist:
+                best_dirs.append((dx, dy))
+
+        # 候補があるならその中からランダムに選ぶ
+        if best_dirs:
+            return random.choice(best_dirs)
+
+        # 移動できる方向がない場合は逆戻り許容
+        for dx, dy in dirs:
+            if self.can_move_to(self.x + dx, self.y + dy):
+                return (dx, dy)
+
+        return (0, 0)  # 動けない場合（稀）
+
+
+class App:
+    def __init__(self):
+        self.player = self.init_player()
+        self.ghosts = self.init_ghosts()
+        pyxel.init(SCREEN_WIDTH, SCREEN_HEIGHT)
+        pyxel.title("Pac-Man + Ghosts")
+        pyxel.run(self.update, self.draw)
+
+    def init_player(self):
+        for y, row in enumerate(MAZE):
+            for x, val in enumerate(row):
+                if val == 9:
+                    MAZE[y][x] = 0
+                    return Player(x, y)
+
+    def init_ghosts(self):
+        # 巣の中央あたりから複数出す
+        return [
+            FoolishGhost(8, 7, pyxel.COLOR_RED),
+            FoolishGhost(9, 7, pyxel.COLOR_GREEN),
+            ChassingGhost(10, 7, pyxel.COLOR_CYAN),
+            ChassingGhost(9, 8, pyxel.COLOR_BROWN),
+        ]
+
+    def trigger_power_mode(self):
+        # ゴーストを逃走状態にする
+        for ghost in self.ghosts:
+            ghost.mode = "frightened"
+            ghost.fright_timer = 3*60   # 3秒間逃走状態
+        # プレイヤーのパワー餌状態を更新
+        self.player.power_mode = True
+
+    def update(self):
+        self.player.update(self)
+        for ghost in self.ghosts:
+            ghost.update(self)
+
+        # 衝突判定（タイル座標一致）
+        for ghost in self.ghosts:
+            if self.player.x == ghost.x and self.player.y == ghost.y:
+                if ghost.mode == "frightened":
+                    self.player.score += 200
+                    ghost.x, ghost.y = 8, 7  # 巣へ戻す
+                    ghost.mode = "chase"
+                else:
+                    self.player.alive = False
+
+    def draw(self):
+        pyxel.cls(0)
+
+        for y, row in enumerate(MAZE):
+            for x, val in enumerate(row):
+                px = x * TILE_SIZE
+                py = y * TILE_SIZE
+                if val == 1:
+                    pyxel.rect(px, py, TILE_SIZE, TILE_SIZE, pyxel.COLOR_NAVY)
+                elif val == 0:
+                    cx = px + TILE_SIZE // 2
+                    cy = py + TILE_SIZE // 2
+                    pyxel.circ(cx, cy, 1, pyxel.COLOR_WHITE)
+                elif val == 3:
+                    pyxel.rect(px, py, TILE_SIZE, TILE_SIZE, pyxel.COLOR_DARK_BLUE)
+                elif val == 4:  # パワー餌
+                    if pyxel.frame_count % 10 < 5:
+                        pyxel.circ(px + TILE_SIZE//2, py + TILE_SIZE//2, 2, pyxel.COLOR_PINK)
+                    else:
+                        pyxel.circ(px + TILE_SIZE//2, py + TILE_SIZE//2, 2, pyxel.COLOR_WHITE)
+
+        self.player.draw()
+        for ghost in self.ghosts:
+            ghost.draw()
+
+        # デバッグ：ゴーストの状態を表示
+        for i, ghost in enumerate(self.ghosts):
+            print(f"Ghost {i}: mode = {ghost.mode}")
+
+        pyxel.text(5, 5, f"SCORE: {self.player.score}", pyxel.COLOR_WHITE)
+
+        if not self.player.alive:
+            pyxel.text(SCREEN_WIDTH // 2 - 20, SCREEN_HEIGHT // 2, "GAME OVER", pyxel.COLOR_RED)
+
+App()
