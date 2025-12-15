@@ -1,0 +1,33 @@
+"""
+課題1-5
+"""
+
+# 任天堂のデータだけに絞る
+nintendo_df = df[df["発行者"] == "任天堂株式会社"].copy()
+print(nintendo_df.head())
+
+print(nintendo_df["ゲームパッケージラベル"].unique())
+print(nintendo_df["ゲームプラットフォーム"].unique())
+print(nintendo_df["ゲームパッケージラベル"].value_counts())
+print(nintendo_df["ゲームプラットフォーム"].value_counts())
+
+
+# 公開年月日を datetime 型に変換
+nintendo_df["公開年月日"] = pd.to_datetime(nintendo_df["公開年月日"], errors="coerce")
+
+# 年を新しい列として追加
+nintendo_df["公開年"] = nintendo_df["公開年月日"].dt.year
+
+# 年 × プラットフォーム で集計（発売数）
+nintendo_platform_year_counts = nintendo_df.groupby(["公開年", "ゲームプラットフォーム"]).size().unstack(fill_value=0)
+
+# 折れ線グラフの描画
+nintendo_platform_year_counts.plot(kind="line", marker="o", figsize=(12, 6))
+
+plt.title("任天堂のプラットフォーム別・年度ごとのゲーム発売数推移")
+plt.xlabel("公開年")
+plt.ylabel("発売本数")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.legend(title="ゲームプラットフォーム")
+plt.show()
